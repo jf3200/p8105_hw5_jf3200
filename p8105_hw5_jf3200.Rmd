@@ -30,9 +30,17 @@ scale_fill_discrete = scale_fill_viridis_d
 
 ## Problem 1 
 
-Read in data
+```{r read_homicide_data_raw}
+homicide_df = 
+  read_csv("homicide_data/homicide-data.csv") 
+```
 
-```{r read_homicide_data}
+The raw data contains information on homicides in 50 large US cities. The variables include report date, victim's first and last name, as well as victim's race, age and sex. Additionally the database includes variables for city, state, latitude, longitude, and disposition of the case. The data has  `r nrow(homicide_df)` rows and `r ncol(homicide_df)` columns. 
+
+
+Next, we will clean the data. Below, we create a variable `city_state` that merges the `city` and `state`variables into one variable separated by an underscore. Additionally, we create a variable called `resolved` which condenses `disposition` into 2 groups: unsolved and solved. Lastly, we remove the `city_state` of Tulsa_AL since this seems to be an error (Tulsa is on Oklahoma(OK))
+
+```{r clean_data}
 homicide_df = 
   read_csv("homicide_data/homicide-data.csv") %>% 
   mutate( 
@@ -46,7 +54,7 @@ homicide_df =
   filter(city_state != "Tulsa_AL")
 ```
 
-Let's look at this a bit
+Next, we  summarize by city to obtain the total number of homicides and the number of unsolved homicides in each.
 
 ```{r}
 aggregate_df =
@@ -55,20 +63,29 @@ aggregate_df =
   summarize( 
     hom_total = n(), 
     hom_unsolved = sum(resolved == "unsolved"))
+
+aggregate_df
 ```
 
-Can I do a prop test for a single city ?
+We will look at Baltimore, MD and use the `prop.test` function to estimate the proportion of homicides that are unsolved. Below, we will see a tibble containing `estimate`, `conf.low` and `conf.high` which represent the estimated proportion of unsolved homicides and its lower and upper confidence interval bounds, respectively. 
 
-```{r}
-prop.test(
+
+```{r baltimore_prop_test}
+test_output = 
+  prop.test(
   aggregate_df %>% filter(city_state == "Baltimore_MD") %>% pull(hom_unsolved), 
-  aggregate_df %>% filter(city_state == "Baltimore_MD") %>% pull(hom_total)) %>% 
-  broom::tidy()
+  aggregate_df %>% filter(city_state == "Baltimore_MD") %>% pull(hom_total))
+
+test_output %>%
+  broom::tidy() %>% 
+  select(estimate, conf.low, conf.high)
 ```
 
-Try to iterate...
 
-```{r}
+
+Now, we will look at `prop.test` for each of the cities by using an iterative process. A resulting tibble will contain the same information as the tibble above for Baltimore_MD for each city,
+
+```{r iterate_prop_test}
 results_df = 
   aggregate_df %>%
   mutate(
@@ -78,9 +95,12 @@ results_df =
   select(-prop_tests) %>% 
   unnest(tidy_tests) %>% 
   select(city_state, estimate, conf.low, conf.high)
+
+results_df
   
 ```
 
+A plot of this information for each city is displayed below
 
 ```{r}
 results_df %>% 
@@ -90,5 +110,4 @@ results_df %>%
   geom_errorbar(aes(ymin = conf.low, ymax = conf.high)) +
   theme(axis.text.x =  element_text(angle = 90, vjust = 0.5, hjust = 1))
 ```
-
 
