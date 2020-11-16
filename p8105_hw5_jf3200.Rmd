@@ -9,6 +9,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r set_up}
+
+set.seed(1)
+
 library(tidyverse)
 
 
@@ -38,7 +41,7 @@ homicide_df =
 The raw data contains information on homicides in 50 large US cities. The variables include report date, victim's first and last name, as well as victim's race, age and sex. Additionally the database includes variables for city, state, latitude, longitude, and disposition of the case. The data has  `r nrow(homicide_df)` rows and `r ncol(homicide_df)` columns. 
 
 
-Next, we will clean the data. Below, we create a variable `city_state` that merges the `city` and `state`variables into one variable separated by an underscore. Additionally, we create a variable called `resolved` which condenses `disposition` into 2 groups: unsolved and solved. Lastly, we remove the `city_state` of Tulsa_AL since this seems to be an error (Tulsa is on Oklahoma(OK))
+Next, we will clean the data. Below, we create a variable `city_state` that merges the `city` and `state`variables into one variable separated by an underscore. Additionally, we create a variable called `resolved` which condenses `disposition` into 2 groups: unsolved and solved. Lastly, we remove the `city_state` of Tulsa_AL since this seems to be an error (Tulsa is on Oklahoma). 
 
 ```{r clean_data}
 homicide_df = 
@@ -56,15 +59,15 @@ homicide_df =
 
 Next, we  summarize by city to obtain the total number of homicides and the number of unsolved homicides in each.
 
-```{r}
+```{r summary_by_city}
 aggregate_df =
   homicide_df %>%
   group_by(city_state) %>% 
   summarize( 
     hom_total = n(), 
-    hom_unsolved = sum(resolved == "unsolved"))
+    hom_unsolved = sum(resolved == "unsolved")) %>% 
+  print()
 
-aggregate_df
 ```
 
 We will look at Baltimore, MD and use the `prop.test` function to estimate the proportion of homicides that are unsolved. Below, we will see a tibble containing `estimate`, `conf.low` and `conf.high` which represent the estimated proportion of unsolved homicides and its lower and upper confidence interval bounds, respectively. 
@@ -83,7 +86,7 @@ test_output %>%
 
 
 
-Now, we will look at `prop.test` for each of the cities by using an iterative process. A resulting tibble will contain the same information as the tibble above for Baltimore_MD for each city.
+Now, we will look at `prop.test` for each of the cities by using an iterative process and the `map2()` and `map()` functions. A resulting tibble will contain the same information as the tibble above for Baltimore_MD for each city.
 
 ```{r iterate_prop_test}
 results_df = 
@@ -94,10 +97,8 @@ results_df =
   ) %>% 
   select(-prop_tests) %>% 
   unnest(tidy_tests) %>% 
-  select(city_state, estimate, conf.low, conf.high)
-
-results_df
-  
+  select(city_state, estimate, conf.low, conf.high) %>% 
+  print()
 ```
 
 A plot of this information for each city is displayed below
@@ -116,14 +117,14 @@ results_df %>%
 
 For problem 2 we will iterate to read in 20 csv files, each containing data for a separate subject from a longitudinal study. The study contained both a control and experimental arm.
 
-We will create a tidy dataframe containing data from all participants, including the subject ID, arm, and value of the observations over the weeks.
+We will create a tidy dataframe containing data from all subjects, including the subject ID, arm, and observations over the weeks.
 
 ```{r tidy_lda_data}
 lda_data =
   tibble(
   path = list.files("lda_data")) %>%  
-  mutate(files = map(path, ~read.csv(file = paste0("./lda_data/",.x)))) %>% 
-  unnest(cols = c(files)) %>% 
+  mutate(files = map(path, ~read.csv(file = paste0("lda_data/",.x)))) %>% 
+  unnest(files) %>% 
   pivot_longer(
     cols = week_1:week_8, 
     names_to = "week", 
@@ -148,16 +149,127 @@ lda_data %>%
   ggplot(aes(x = week, y = value, color = subject)) +
   geom_line(aes(group = subject)) + 
   facet_grid(~arm) +
-  labs(x = "Week", 
+  labs(title = "Observations Over Time by Arm",
+       x = "Week", 
        y = "Observation")
 
 ```
 
 
-We notice that in the control group, the values stay mostly stable across the weeks. However, for the experimental group, there is a steady increase in values across the weeks. 
+We notice that in the control group, the values stay mostly stable across the weeks. However, for the experimental group, there is a steady increase in values across the weeks. Also, we can notice that some of the experimental subjects (01 and 06) started off with higher values than the control subjects.
 
 ## Problem 3 
 
+Power is the probability that a false null hypothesis is rejected. Here, we will conduct a simulation to explore power in a one-sample t-test.
+
+First, we will create a function that allows us to generate data from the normal distribution of size $n$ = 30 with parameter $\sigma$ = 5. It will save as output `mu_hat` (the estimated mean parameter,$\hat{\mu}$ , and `p_value`, the p-value from a `t.test` with the null hypothesis that $\mu$  = 0 at the $\alpha$  = 0.05 level. 
+
+```{r build_sim_mean}
+sim_mean = function(n = 30, mu, sigma =5) {
+  
+  #get normal random sample
+  sim_data = tibble(
+    x = rnorm(n, mean = mu, sd = sigma),
+  )
+  
+  
+  # run t test
+  t_test = t.test(sim_data %>% pull(x), mu = 0)
+  
+  # save p-value
+  output <- broom::tidy(t_test) %>% 
+    janitor::clean_names() %>% 
+    select(p_value)
+  
+  ## Get mu-hat
+  sim_data = 
+    sim_data %>% 
+    summarize(mu_hat  = mean(x))
+  
+  #return both values
+  return(bind_cols(output, sim_data))
+}
+
+```
+
+Now, we will run the function 5,000 times
+
+```{r rerun_sim_mean}
+sim_results = 
+  rerun(5000, sim_mean(mu = 0)) %>% 
+  bind_rows() %>% 
+  print()
+```
+
+Repeat for values of $\mu$ = {1,2,3,4,5,6}
+
+```{r map_sim_mean, cache = TRUE}
+sim_mu_vals <- tibble(mu_vals = c(1, 2, 3, 4, 5, 6)) %>% 
+  mutate(output = map(.x = mu_vals, ~rerun(5000, sim_mean(mu = .x))), 
+         estimate_output = map(output, bind_rows)) %>% 
+  select(-output) %>%
+  unnest(estimate_output) %>% 
+  mutate(sig = p_value < 0.05)
+```
+
+
+Below is a plot showing the proportion of times the null was rejected (the power of the test) on the y axis and the true value of $\mu$ on the x axis.
+
+
+```{r power_plot}
+#Combine mu=0 to mu=1,2,3,4,5,6
+sim_results =
+  sim_results %>% 
+  mutate(mu_vals = 0, 
+         sig = p_value < 0.05) %>% 
+  select(mu_vals, p_value, mu_hat, sig) %>% 
+  bind_rows(sim_mu_vals)
+
+## Make plot
+
+sim_results %>% 
+  group_by(mu_vals) %>% 
+  summarize(prop_sig = mean(sig)) %>% 
+  ggplot(aes(x = mu_vals, y = prop_sig)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Association between Effect Size and Power",
+       y = "Power",
+       x = "Mu (True Value)") +
+  scale_y_continuous(lim = c(0, 1)) +
+  scale_x_continuous(breaks = seq(0, 6, 1))
+```
+
+As the true value of $\mu$ increases, so does the power. When the the true value of $\mu$ is close to the value being tested with under null hypothesis ($\mu$ =0), power is low, but as the true $\mu$ value becomes further away from 0, the power to detect a difference gradually increases. 
+ 
+ 
+ 
+Below, is a plot showing the average estimate of $\hat{\mu}$ on the y axis and the true value of $\mu$ on the x axis. The average estimate of $\hat{\mu}$ is displayed both for all samples, and also only in samples for which the null (H0) was rejected. 
+
+
+```{r mu_hat_plot}
+sim_results %>% 
+  group_by(mu_vals) %>% 
+  mutate(avg_mu_hat = mean(mu_hat)) %>% 
+  filter(sig == TRUE) %>% 
+  mutate(avg_mu_hat_sig = mean(mu_hat)) %>%
+  distinct(mu_vals, .keep_all = TRUE) %>% 
+  select(mu_vals, starts_with("avg")) %>% 
+  pivot_longer(avg_mu_hat:avg_mu_hat_sig, 
+               names_to = "group") %>%
+  ggplot(aes(x = mu_vals, y = value, colour = group)) + 
+  geom_line(alpha = 0.5) + 
+  labs(x = "μ (True Value)",
+       y = "Average Estimate of μ-hat") +
+  scale_colour_discrete(name = " ", labels = c("All Samples", "Only Samples when H0 was Rejected"))
+
+```
+
+
+When the true value of $\mu$ is 0, the sample average $\hat{\mu}$  across tests for which the null is rejected is close to the true value of $\mu$. At this value,very few tests rejected, and thus we would expect the $\hat{\mu}$  to be close to $\mu$. 
+
+For true $\mu$ values of 4,5 and 6, $\hat{\mu}$ among samples in which H0 is rejected is very close to the true $\mu$. This is because almost all tests are rejected as these true $\mu$ values are far from the null where $\mu$ = 0.  Also, since nearly all tests are rejected, we do not see a difference in $\hat{\mu}$ between all samples and only samples in which H0 is rejected. 
+
+For true $\mu$ values of 1, and 2, the $\hat{\mu}$  is further away from the true value. This is because in order for the H0 to be rejected, the $\hat{\mu}$ has to be far enough away from $\mu$ = 0 under H0. We see that average $\hat{\mu}$ for samples in which H0 is rejected is larger than the average  $\hat{\mu}$ across all samples, and also larger than the true $\mu$
 
 
 
